@@ -1,0 +1,348 @@
+// /backend/src/prisma/schema.prisma
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+/////////////////////////////
+// Company & Tenant Models //
+/////////////////////////////
+
+model Company {
+  id              String         @id @default(uuid()) // Unique company/tenant ID.
+  email           String         @unique              // Unique email for the company.
+  passwordHash    String                             // Hashed password for authentication.
+  representative  String?                           // Representative's name.
+  companyName     String?                           // Company name.
+  address         String?                           // Physical address.
+  phone           String?                           // Contact phone.
+  website         String?                           // Optional website.
+  createdAt       DateTime       @default(now())    // Creation timestamp.
+  updatedAt       DateTime       @updatedAt         // Last update timestamp.
+
+  // Relations (child records store foreign keys)
+  users           User[]                             // Users in the company.
+  clientGroups    ClientGroup[]                      // Groups for organizing clients.
+  clients         Client[]                           // Clients of the company.
+  taskLists       TaskList[]                         // Task lists (boards).
+  clientTasks     ClientTask[]                       // Client tasks.
+  invoices        Invoice[]                          // Invoices related to this company.
+  fileAttachments FileAttachment[]                   // File attachments.
+  taskStages      TaskStage[]                        // Task stages.
+}
+
+////////////////////////////
+// Role & Group (RBAC)    //
+////////////////////////////
+
+model Role {
+  id          String   @id @default(uuid()) // Unique role ID.
+  name        String                        // Role name (e.g., "Project Manager").
+  permissions Json                          // JSON object storing permission flags.
+  createdAt   DateTime @default(now())       // Creation timestamp.
+  updatedAt   DateTime @updatedAt            // Update timestamp.
+
+  groups      Group[]                      // Groups assigned to this role.
+}
+
+model Group {
+  id         String   @id @default(uuid())         // Unique group ID.
+  companyId  String                                 // Foreign key to Company.
+  name       String                                 // Group name (e.g., "Developers").
+  description String?                                // Optional description.
+  roleId     String                                 // Foreign key to Role.
+  createdAt  DateTime @default(now())               // Creation timestamp.
+  updatedAt  DateTime @updatedAt                    // Update timestamp.
+
+  company    Company  @relation(fields: [companyId], references: [id])
+  role       Role     @relation(fields: [roleId], references: [id])
+  users      User[]                                 // Users in the group.
+  taskStages TaskStage[]                            // Task stages assigned to this group.
+}
+
+////////////////////////////
+// User Model             //
+////////////////////////////
+
+model User {
+  id            String   @id @default(uuid())         // Unique user ID.
+  companyId     String                                 // Foreign key to Company.
+  groupId       String                                 // Foreign key to Group.
+  name          String                                 // User's full name.
+  email         String   @unique                       // Unique email address.
+  passwordHash  String                                 // Hashed password.
+  phone         String?                                // Optional phone number.
+  address       String?                                // Optional address.
+  hourlyRate    Float?                                 // Hourly rate for hourly paid users.
+  fixedSalary   Float?                                 // Fixed monthly salary.
+  currency      String                                 // Payment currency (e.g., "USD", "EUR").
+  createdAt     DateTime @default(now())               // Creation timestamp.
+  updatedAt     DateTime @updatedAt                    // Update timestamp.
+
+  company       Company  @relation(fields: [companyId], references: [id])
+  group         Group    @relation(fields: [groupId], references: [id])
+  userTasks     UserTask[]                             // Subtasks assigned to this user.
+  timeLogs      TimeLog[]                              // Time logs.
+  comments      TaskComment[]                          // Task comments.
+  fileAttachments FileAttachment[]                     // Uploaded files.
+  managedClients Client[]   @relation("ManagedClients")  // Clients managed by the user.
+  paymentPreference UserPaymentPreference?             // User's payment preferences.
+}
+
+model UserPaymentPreference {
+  id          String   @id @default(uuid())          // Unique payment preference ID.
+  userId      String   @unique                      // One-to-one relation with User.
+  method      String                                // Preferred method (e.g., "paypal", "wise").
+  details     Json?                                 // Additional payment details (e.g., IBAN, email).
+  createdAt   DateTime @default(now())               // Creation timestamp.
+  updatedAt   DateTime @updatedAt                    // Update timestamp.
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+////////////////////////////
+// Client Groups & Client //
+////////////////////////////
+
+model ClientGroup {
+  id          String   @id @default(uuid())         // Unique client group ID.
+  companyId   String                                 // Foreign key to Company.
+  name        String                                 // Group name (e.g., "Top Clients").
+  description String?                                // Optional description.
+  createdAt   DateTime @default(now())               // Creation timestamp.
+  updatedAt   DateTime @updatedAt                    // Update timestamp.
+  
+  company     Company  @relation(fields: [companyId], references: [id])
+  clients     Client[]                              // Clients belonging to this group.
+}
+
+model Client {
+  id               String       @id @default(uuid())   // Unique client ID.
+  companyId        String                                 // Foreign key to Company.
+  clientGroupId    String?                                // Foreign key to ClientGroup.
+  projectManagerId String?                                // Foreign key to User (project manager).
+  name             String                                 // Client name.
+  email            String?                                // Optional email.
+  phone            String?                                // Optional phone.
+  address          String?                                // Optional address.
+  notes            String?                                // Additional notes.
+  createdAt        DateTime     @default(now())          // Creation timestamp.
+  updatedAt        DateTime     @updatedAt               // Update timestamp.
+  
+  company          Company  @relation(fields: [companyId], references: [id])
+  clientGroup      ClientGroup? @relation(fields: [clientGroupId], references: [id])
+  projectManager   User?        @relation("ManagedClients", fields: [projectManagerId], references: [id])
+  taskLists        TaskList[]                               // Boards (lists) associated with the client.
+  clientTasks      ClientTask[]                             // Tasks for the client.
+}
+
+////////////////////////////
+// Boards, Lists & Tasks  //
+////////////////////////////
+
+model TaskList {
+  id          String   @id @default(uuid())           // Unique list ID.
+  companyId   String                                 // Foreign key to Company.
+  clientId    String?                                // Optional: if list belongs to a client board.
+  name        String                                 // List name.
+  description String?                                // Optional description.
+  orderIndex  Int                                    // Order for display.
+  createdAt   DateTime @default(now())               // Creation timestamp.
+  updatedAt   DateTime @updatedAt                    // Update timestamp.
+  
+  company     Company  @relation(fields: [companyId], references: [id])
+  client      Client?  @relation(fields: [clientId], references: [id])
+  clientTasks ClientTask[]                             // Tasks (cards) in this list.
+}
+
+model ClientTask {
+  id             String   @id @default(uuid())           // Unique task ID.
+  companyId      String                                 // Foreign key to Company.
+  clientId       String                                 // Foreign key to Client.
+  listId         String                                 // Foreign key to TaskList.
+  title          String                                 // Task title.
+  description    String?                                // Detailed description.
+  dueDate        DateTime?                              // Optional due date.
+  overallStatus  String                                 // Task status (e.g., "Pending").
+  financialInfo  Json?                                  // Billing info.
+  createdById    String?                                // Who created the task.
+  assignedById   String?                                // Who assigned the task.
+  assignedAt     DateTime?                              // When assigned.
+  orderIndex     Int                                    // Order for display.
+  createdAt      DateTime @default(now())               // Creation timestamp.
+  updatedAt      DateTime @updatedAt                    // Update timestamp.
+  
+  company        Company  @relation(fields: [companyId], references: [id])
+  client         Client   @relation(fields: [clientId], references: [id])
+  list           TaskList @relation(fields: [listId], references: [id])
+  taskStages     TaskStage[]                              // Stages of the task.
+  userTasks      UserTask[]                               // Subtasks.
+  comments       TaskComment[] @relation("ClientTaskComments")
+  invoices       Invoice[]                              // Invoices related to this task.
+}
+
+model TaskStage {
+  id                    String       @id @default(uuid()) // Unique stage ID.
+  companyId             String                                 // Foreign key to Company.
+  clientTaskId          String                                 // Foreign key to ClientTask.
+  name                  String                                 // Stage name (e.g., "Design").
+  description           String?                                // Stage-specific instructions.
+  orderIndex            Int                                    // Order in workflow.
+  groupId               String                                 // Foreign key to Group (responsible group).
+  defaultAssignedUserId String?                                // Optionally pre-assigned user.
+  createdAt             DateTime     @default(now())          // Creation timestamp.
+  updatedAt             DateTime     @updatedAt               // Update timestamp.
+  
+  company        Company  @relation(fields: [companyId], references: [id])
+  clientTask     ClientTask @relation(fields: [clientTaskId], references: [id])
+  group          Group    @relation(fields: [groupId], references: [id])
+  userTasks      UserTask[]                               // Subtasks linked to this stage.
+  comments       TaskComment[] @relation("StageComments")
+  fileAttachments FileAttachment[] @relation("StageAttachments")
+}
+
+model UserTask {
+  id             String    @id @default(uuid())         // Unique subtask ID.
+  clientTaskId   String                                   // Foreign key to ClientTask.
+  companyId      String                                   // Foreign key to Company.
+  assignedUserId String?                                  // Foreign key to User.
+  taskStageId    String?                                  // Optional reference to TaskStage.
+  title          String                                   // Subtask title.
+  description    String?                                  // Optional description.
+  createdById    String?                                  // Who created the subtask.
+  assignedById   String?                                  // Who assigned it.
+  assignedAt     DateTime?                                // When assigned.
+  timeLogged     Float     @default(0)                  // Hours logged.
+  status         String                                   // Status ("To Do", etc.).
+  orderIndex     Int                                    // Order for display.
+  createdAt      DateTime  @default(now())              // Creation timestamp.
+  updatedAt      DateTime  @updatedAt                   // Update timestamp.
+  
+  company        Company  @relation(fields: [companyId], references: [id])
+  clientTask     ClientTask @relation(fields: [clientTaskId], references: [id])
+  assignedUser   User?     @relation(fields: [assignedUserId], references: [id])
+  taskStage      TaskStage? @relation(fields: [taskStageId], references: [id])
+  timeLogs       TimeLog[]                                // Time logs for the subtask.
+  comments       TaskComment[] @relation("UserTaskComments")
+  fileAttachments FileAttachment[] @relation("UserTaskAttachments")
+}
+
+//////////////////////////
+// Time Logs & Task Notes
+//////////////////////////
+
+model TimeLog {
+  id          String   @id @default(uuid())           // Unique time log ID.
+  userTaskId  String                                    // Foreign key to UserTask.
+  userId      String                                    // Foreign key to User.
+  hours       Float                                     // Hours logged.
+  logDate     DateTime @default(now())                  // When logged.
+  notes       String?                                   // Detailed note describing work done.
+  createdAt   DateTime @default(now())                  // Creation timestamp.
+  
+  userTask    UserTask @relation(fields: [userTaskId], references: [id])
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+//////////////////////////
+// Task Comments
+//////////////////////////
+
+model TaskComment {
+  id         String   @id @default(uuid())           // Unique comment ID.
+  taskType   String                                    // "client_task", "user_task", "task_stage".
+  taskId     String                                    // ID of the parent task entity.
+  userId     String                                    // User who commented.
+  content    String                                    // Comment text.
+  createdAt  DateTime @default(now())                  // Timestamp.
+  user       User     @relation(fields: [userId], references: [id])
+}
+
+//////////////////////////
+// Invoice Model
+//////////////////////////
+
+model Invoice {
+  id             String   @id @default(uuid())         // Unique invoice ID.
+  companyId      String                                    // Foreign key to Company.
+  relatedTaskId  String?                                   // Reference to a ClientTask or aggregated UserTasks.
+  invoiceType    String                                    // "Client Billing" or "Member Payout".
+  amount         Float                                     // Total amount.
+  currency       String                                    // Currency (e.g., "USD", "EUR").
+  exchangeRate   Float?                                    // Conversion rate if applicable.
+  status         String                                    // Invoice status ("Pending", "Paid").
+  generatedAt    DateTime @default(now())                  // When generated.
+  dueDate        DateTime?                                 // Due date.
+  paidAt         DateTime?                                 // Payment date.
+  createdAt      DateTime @default(now())
+  
+  company        Company  @relation(fields: [companyId], references: [id])
+}
+
+//////////////////////////
+// File Attachments
+//////////////////////////
+
+model FileAttachment {
+  id           String   @id @default(uuid())           // Unique attachment ID.
+  companyId    String                                    // Foreign key to Company.
+  taskType     String                                    // "client_task", "user_task", "task_stage".
+  taskId       String                                    // Associated entity ID.
+  fileName     String                                    // Original file name.
+  fileUrl      String                                    // Relative URL (e.g., /uploads/2023/03/27/filename.ext).
+  uploadedById String                                    // User who uploaded.
+  uploadedAt   DateTime @default(now())                  // Timestamp.
+  
+  company      Company  @relation(fields: [companyId], references: [id])
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+}
+
+//////////////////////////
+// Currency Rate Model
+//////////////////////////
+
+model CurrencyRate {
+  id        String   @id @default(uuid())               // Unique ID for the rate.
+  currency  String                                     // ISO code (e.g., "USD", "EUR").
+  rate      Float                                      // Conversion rate relative to a base currency.
+  updatedAt DateTime @default(now()) @updatedAt           // Last update timestamp.
+  
+  @@unique([currency])
+}
+
+//////////////////////////
+// Monthly Invoice Models
+//////////////////////////
+
+model MonthlyInvoice {
+  id            String                @id @default(uuid()) // Unique invoice ID.
+  userId        String                                     // User associated with the invoice.
+  periodStart   DateTime                                   // Start of invoice period.
+  periodEnd     DateTime                                   // End of invoice period.
+  totalAmount   Float                                      // Aggregated total for this period.
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  user          User                  @relation(fields: [userId], references: [id])
+  lines         MonthlyInvoiceLine[]
+}
+
+model MonthlyInvoiceLine {
+  id              String          @id @default(uuid())  // Unique line item ID.
+  monthlyInvoiceId String
+  monthlyInvoice  MonthlyInvoice  @relation(fields: [monthlyInvoiceId], references: [id])
+  clientId        String
+  client          Client          @relation(fields: [clientId], references: [id])
+  taskId          String          // Associated task ID.
+  taskLink        String          // URL/identifier to view task details.
+  note            String          // Short note describing work done.
+  timeSpent       Float           // Hours logged.
+  hourlyRate      Float           // Hourly rate applied.
+  currency        String          // Currency code.
+  total           Float           // Calculated total (timeSpent * hourlyRate).
+  finishedAt      DateTime        // When the stage was marked complete.
+  createdAt       DateTime        @default(now())
+}
